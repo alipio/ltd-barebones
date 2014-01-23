@@ -1,0 +1,544 @@
+#@+leo-ver=5-thin
+#@+node:peckj.20140123082920.3668: * @file ltd-scripts.txt
+This file contains @button, @command, and @nodewatch nodes related
+to LTD.
+
+#@+all
+#@+node:peckj.20140104191955.3667: ** @common LTD
+@language python
+
+''' Include this script with the exec(g.findTestScript(c,'@common LTD')) trick. '''
+
+<< imports >>
+<< declarations >>
+
+@others
+#@+node:peckj.20140104191955.3669: *3* << imports >>
+## imports
+import time
+import datetime
+from dateutil.relativedelta import relativedelta
+import copy
+from PyQt4 import QtCore
+#@+node:peckj.20140104191955.3671: *3* << declarations >>
+valid_recurrences = {
+  '@daily': relativedelta(days=1), 
+  '@daily-weekdays': 'special', # handled corner case
+  '@weekly': relativedelta(days=7), 
+  '@biweekly': relativedelta(days=14),
+  '@monthly': relativedelta(months=1),
+  '@bimonthly': relativedelta(months=2),
+  '@quarterly': relativedelta(months=3),
+  '@triannualy': relativedelta(months=4),
+  '@semianually': relativedelta(months=6),
+  '@annually': relativedelta(years=1),
+  '@yearly': relativedelta(years=1)
+}
+
+valid_tasktypes = ['@work', '@leisure', '@responsibility']
+#@+node:peckj.20140104192928.3669: *3* mark-task-done stuff
+#@+node:peckj.20140104191955.3677: *4* task parsers
+#@+node:peckj.20140104191955.3678: *5* grab_directives
+def grab_directives():
+  ''' populates a list with all the directives in the node's body '''
+  directives = []
+  for line in p.b.splitlines():
+    if line.startswith('@'):
+      directives.append(line.strip())
+  return directives
+#@+node:peckj.20140104191955.3679: *5* grab_recurrence
+def grab_recurrence(directives):
+  ''' returns the first valid recurrance as a relativedelta, or False if none '''  
+  for d in directives:
+    if d in valid_recurrences:
+      return valid_recurrences[d]
+  return False
+#@+node:peckj.20140104191955.3680: *5* grab_tasktype
+def grab_tasktype(directives):
+  ''' determine task type from directives
+      returns None if not a valid task type
+  '''
+  tasktype = None
+  for d in directives:
+    if d in valid_tasktypes:
+      tasktype = d
+      break
+  return tasktype
+#@+node:peckj.20140104191955.3686: *4* node helpers
+#@+node:peckj.20140104191955.3687: *5* mark_node_done
+def mark_node_done():
+  ''' marks the priority on the current node to 100, defined in todo.py as 'done' '''
+  c.cleo.setPri(100)
+#@+node:peckj.20140104191955.3688: *5* copy_node
+def copy_node():
+  ''' copies the currently selected node into a new node directly after
+      the current node.
+      
+      Also, makes sure to do a DEEP COPY on p.v.u, to prevent shared p.v's
+  '''
+  orig_node = p
+  new_node = p.insertAfter()
+  new_node.h = orig_node.h
+  new_node.b = orig_node.b
+  new_node.v.u = copy.deepcopy(orig_node.v.u)
+  return (orig_node, new_node)
+#@+node:peckj.20140104191955.3689: *5* reschedule_node
+def reschedule_node(node, recur): 
+  ''' sets node's nextworkdate according to recur, which can have the following values:
+      relativedelta - applied directly
+      string 'special' - special case for @daily-weekdays
+  '''
+  date = c.cleo.getat(node.v, 'nextworkdate')
+  if not date:
+    date = datetime.date.today()
+    g.es(type(date))
+  if recur == 'special': #@daily-weekdays
+    newdate = date + relativedelta(days=1)
+    while newdate.weekday() > 4:
+      newdate = newdate + relativedelta(days=1)
+  else:
+    newdate = date + recur
+    
+  day,month,year = newdate.day, newdate.month, newdate.year
+  c.cleo.set_due_date(p=node, field='nextworkdate', val=QtCore.QDate(year,month,day))
+#@+node:peckj.20140104191955.3690: *5* move_node_to_reports
+def move_node_to_reports(node, tasktype, date):
+  ''' moves the original node to the correct "Report" subtree '''
+  ## move original node to the correct report directory
+  ds = time.strftime("%m/%d/%Y", date.timetuple())
+  cal = datetime.date.today().isocalendar()
+  weeknum = "%s Week %s" % (cal[0], cal[1]) # ex. '2013 Week 41'
+  tasktype = tasktype[1:].title() # convert '@work' to 'Work', for example
+  
+  # find proper report node, create if it doesn't exist
+  # proper node = "@chapters --> @chapter Reports --> weeknum --> ds --> tasktype"
+  heads = ['@chapters', '@chapter Reports', weeknum, ds, tasktype]
+  pos = c.createNodeHierarchy(heads)
+  node.moveToLastChildOf(pos)
+#@+node:peckj.20140104191955.3672: *4* mark_task_done
+def mark_task_done(date=None):
+  ''' Does a few complex actions:
+    1. Checks if the current node has a tasktype (i.e. a directive specified in valid_tasktypes),
+       bails if it does not
+    2. Checks if the current node has a recurrence directive (defined in valid_recurrences)
+      2a. If it does:
+        2aa. Copies node completely
+        2ab. Reschedules the new copy according to the recurrence      
+    3. Marks the current node done
+    4. Moves the current node to the appropriate report node
+    5. Selects either the new copy of the task (if it recurred), or the parent of the orignal task
+       (if it did not recur), to prevent UI disorentation
+    5. Redraws the UI to show updates
+  '''
+  if date is None:
+    date = datetime.date.today()
+  directives = grab_directives()
+  tasktype = grab_tasktype(directives)
+  recur = grab_recurrence(directives)
+  if tasktype is None:
+    g.es('LTD: task nas no valid task type directive... not running script.', color='red')
+  else:
+    # run the rest of the script
+    if recur:
+      #g.es('copying node')
+      (orig_node, new_node) = copy_node()
+      #g.es('rescheduling node')
+      reschedule_node(new_node, recur)
+    else:
+      orig_node = p
+      new_node = p.parent()
+    #g.es('marking node done')
+    mark_node_done()
+    new_node_v = new_node.v # for selectPosition below (outline changes invalidating new_node)
+    #g.es('moving to reports')
+    move_node_to_reports(orig_node, tasktype, date)
+    new_node = c.vnode2position(new_node_v) # reestablishes new_node as a valid position
+    c.selectPosition(new_node)
+    c.redraw_now()
+#@+node:peckj.20140104193155.3676: *3* generate-week-report stuff
+#@+node:peckj.20140104193155.3684: *4* helpers
+#@+node:peckj.20140104193155.3679: *5* is_valid_week
+def is_valid_week(vnode):
+  heads = ['@chapters', '@chapter Reports']
+  valid_node = True
+  for head in reversed(heads):
+    orig_vnode = vnode
+    if len(vnode.parents) == 0:
+      valid_node = False
+      break
+    for parent in vnode.parents:
+      if parent.h == head:
+        vnode = parent
+        break
+    if orig_vnode == vnode:
+      valid_node = False
+      break
+  return valid_node
+#@+node:peckj.20140104193155.3681: *5* make_report_node
+def make_report_node(vnode):
+  pos = c.vnode2position(vnode)
+  pos = pos.insertAsLastChild()
+  pos.h = 'Week Report (%s)' % vnode.h
+  return pos.v
+#@+node:peckj.20140104193155.3683: *5* clone_reports_to_report_node
+def clone_reports_to_report_node(tasktype, v_sel_week, v_report_node):
+  tasktype = tasktype[1:].title()
+  v_target = v_report_node.insertAsLastChild()
+  v_target.h = tasktype
+  fromlist = []
+  for child in v_sel_week.children:
+    if child.h == v_report_node.h:
+      continue
+    for category in child.children:
+      if category.h == tasktype:
+        fromlist.append(category)
+  for node in fromlist:
+    for child in node.children:
+      clone = c.vnode2position(child).clone()
+      clone.moveToLastChildOf(c.vnode2position(v_target))
+#@+node:peckj.20140104193155.3677: *4* generate_week_report
+def generate_week_report():
+  ''' Generate's the currently selected week's report
+    by cloning nodes into a new report outline.
+  '''
+  v_selected_week = p.v
+  if not is_valid_week(v_selected_week):
+    g.es('LTD: not a valid week to generate a report for.', color='red')
+  else:
+    v_report_node = make_report_node(v_selected_week)
+    for tasktype in valid_tasktypes:
+      clone_reports_to_report_node(tasktype, v_selected_week, v_report_node)
+    c.selectPosition(c.vnode2position(v_report_node))
+    c.redraw_now()
+#@+node:peckj.20140104165323.3721: ** Buttons
+#@+node:peckj.20140104165323.3799: *3* @button ltd @color=burlywood1
+@language python
+
+g.es('Right click for options.', color='forestgreen')
+#@+node:peckj.20140104165323.3800: *4* @ignore old and unused rclicks
+#@+node:peckj.20140104165323.3801: *5* @@rclick past-due-report
+@language python
+
+'''
+prints a report to the log pane about tasks that are past due and not marked as 'done'
+'''
+<< imports >>
+@others
+
+today = datetime.date.today()
+tasks = get_tasks_by_date(today, comparator=operator.lt)
+
+if len(tasks) == 0:
+  c.frame.log.clearTab('Reports')
+  g.es('No tasks past due.',color='blue',tabName='Reports')
+else:
+  c.frame.log.clearTab('Reports')
+  g.es('The following tasks are past due:',color='red',tabName='Reports')
+  for v in tasks:
+    g.es(c.vnode2position(v).get_UNL(with_file=False, with_proto=False),color='red',tabName='Reports')
+
+#@+node:peckj.20140104165323.3808: *6* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3809: *6* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3804: *5* @@rclick due-today-report
+@language python
+
+'''
+prints a report to the log pane about tasks that are due today and not marked as 'done'
+'''
+<< imports >>
+@others
+
+today = datetime.date.today()
+tasks = get_tasks_by_date(today, comparator=operator.eq)
+
+if len(tasks) == 0:
+  c.frame.log.clearTab('Reports')
+  g.es('No tasks due today.',color='blue',tabName='Reports')
+else:
+  c.frame.log.clearTab('Reports')
+  g.es('The following tasks are due today:',color='orangered',tabName='Reports')
+  for v in tasks:
+    g.es(c.vnode2position(v).get_UNL(with_file=False, with_proto=False),color='orangered',tabName='Reports')
+
+#@+node:peckj.20140104165323.3808: *6* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3809: *6* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3807: *5* @@rclick due-this-week-report
+@language python
+
+'''
+prints a report to the log pane about tasks that are due within the next 
+seven days and not marked as 'done'
+'''
+<< imports >>
+@others
+
+oneweeklater = datetime.date.today() + relativedelta(days=7)
+tasks = get_tasks_by_date(oneweeklater, comparator=operator.le)
+
+if len(tasks) == 0:
+  c.frame.log.clearTab('Reports')
+  g.es('No tasks due within the next week.',color='blue',tabName='Reports')
+else:
+  c.frame.log.clearTab('Reports')
+  g.es('The following tasks are due within the next week (in no particular order):',color='purple',tabName='Reports')
+  for v in tasks:
+    g.es(c.vnode2position(v).get_UNL(with_file=False, with_proto=False),color='purple',tabName='Reports')
+
+#@+node:peckj.20140104165323.3808: *6* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3809: *6* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3810: *5* @@rclick print-weeknumber
+@language python
+
+import datetime
+
+cal = datetime.date.today().isocalendar()
+g.es("%s Week %s" % (cal[0], cal[1]))
+#@+node:peckj.20140104191955.3691: *4* @rclick mark-task-done
+@language python
+
+exec(g.findTestScript(c,'@common LTD'))
+mark_task_done()
+#@+node:peckj.20140104192928.3671: *4* @rclick mark-task-done-yesterday
+@language python
+
+import datetime
+from dateutil.relativedelta import relativedelta
+
+exec(g.findTestScript(c,'@common LTD'))
+yesterday = datetime.date.today() + relativedelta(days=-1)
+mark_task_done(yesterday)
+#@+node:peckj.20140104193155.3685: *4* @rclick generate-week-report
+@language python
+
+exec(g.findTestScript(c,'@common LTD'))
+generate_week_report()
+#@+node:peckj.20140104165323.3722: ** Nodewatch definitions
+#@+node:peckj.20140104165323.3732: *3* @ignore old nodewatch defs
+#@+node:peckj.20140104165323.3733: *4* @nodewatch @nodewatch definitions
+@language python
+
+categoryname = '@nodewatch definitions'
+nodes = []
+for vnode in c.all_unique_nodes():
+  if vnode.h.startswith('@nodewatch'):
+    nodes.append(vnode)
+c.theNodewatchController.add(categoryname,nodes)
+#@+node:peckj.20140104165323.3734: *4* @nodewatch @major/@minor tasks
+@language python
+
+categoryname='@major/@minor tasks'
+nodes = []
+for n in c.all_unique_nodes():
+  if n.h.startswith('@major') or n.h.startswith('@minor'):
+    nodes.append(n)
+c.theNodewatchController.add(categoryname,nodes)
+#@+node:peckj.20140104165323.3735: *4* @nodewatch Past Due
+@language python
+
+<< imports >>
+@others
+
+categoryname = 'LTD: 00 Past Due'
+today = datetime.date.today()
+tasks = get_tasks_by_date(today, comparator=operator.lt)
+c.theNodewatchController.add(categoryname, tasks)
+#@+node:peckj.20140104165323.3745: *5* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3746: *5* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3738: *4* @nodewatch Due Today
+@language python
+
+<< imports >>
+@others
+
+categoryname = 'LTD: 01 Due Today'
+today = datetime.date.today()
+tasks = get_tasks_by_date(today, comparator=operator.eq)
+c.theNodewatchController.add(categoryname, tasks)
+#@+node:peckj.20140104165323.3745: *5* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3746: *5* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3741: *4* @nodewatch Due Tomorrow
+@language python
+
+<< imports >>
+@others
+
+categoryname = 'LTD: 02 Due Tomorrow'
+today = datetime.date.today() + relativedelta(days=1)
+tasks = get_tasks_by_date(today, comparator=operator.eq)
+c.theNodewatchController.add(categoryname, tasks)
+#@+node:peckj.20140104165323.3745: *5* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3746: *5* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3744: *4* @nodewatch Due This Week
+@language python
+
+<< imports >>
+@others
+
+categoryname = 'LTD: 03 Due This Week'
+today = datetime.date.today() + relativedelta(days=7)
+tasks = get_tasks_by_date(today, comparator=operator.le)
+c.theNodewatchController.add(categoryname, tasks)
+#@+node:peckj.20140104165323.3745: *5* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3746: *5* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3752: *3* @nodewatch LTD nodewatch definitions
+@language python
+
+''' all the @nodewatch defs for LTD:
+    LTD: 00 Past Due -> all incomplete tasks < today
+    LTD: 01 Due Today -> all incomplete tasks = today
+    LTD: 02 Due Tomorrow -> all incomplete tasks = tomorrow
+    LTD: 03 Due This Week -> all incomplete tasks <= today + 1 week
+'''
+
+<< imports >>
+<< declarations >>
+@others
+
+main()
+#@+node:peckj.20140104165323.3753: *4* << imports >>
+import datetime
+import operator
+from dateutil.relativedelta import relativedelta
+#@+node:peckj.20140104165323.3754: *4* << declarations >>
+today = datetime.date.today()
+
+defs = {
+  'LTD: 00 Past Due': (today, operator.lt),
+  'LTD: 01 Due Today': (today, operator.eq),
+  'LTD: 02 Due Tomorrow': (today + relativedelta(days=1), operator.eq),
+  'LTD: 03 Due This Week': (today + relativedelta(days=7), operator.le)
+}
+#@+node:peckj.20140104165323.3755: *4* get_tasks_by_date
+## workhorse
+def get_tasks_by_date(date, comparator=operator.lt):
+  n = []
+  for v in c.all_unique_nodes():
+    duedate = c.cleo.getat(v, 'duedate')
+    nextworkdate = c.cleo.getat(v, 'nextworkdate')
+    priority = c.cleo.getat(v, 'priority')
+    if priority: priority = int(priority)
+    if (((duedate and comparator(duedate,date)) or
+        (nextworkdate and comparator(nextworkdate,date)))
+        and priority != 100):
+      n.append(v)
+  return n
+#@+node:peckj.20140104165323.3756: *4* main
+def main():
+  for category,constraints in defs.items():
+    date,op = constraints
+    tasks = get_tasks_by_date(date, comparator=op)
+    c.theNodewatchController.add(category, tasks)
+#@-all
+#@-leo
