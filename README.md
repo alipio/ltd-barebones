@@ -18,6 +18,7 @@ The `@file ltd-scripts.txt` node contains all the @button and @nodewatch definit
 Make sure you have the following python modules installed:
 
   - python-dateutil
+
 <!--@+node:peckj.20140123082920.4160: *3* Required plugins-->
 ### Required plugins
 Make sure at least the following plugins are enabled in your `myLeoSettings.leo` file:
@@ -27,6 +28,7 @@ Make sure at least the following plugins are enabled in your `myLeoSettings.leo`
   - todo.py
   - nodewatch.py (make sure it's loaded *after* todo.py)
   - viewrendered.py
+
 <!--@+node:peckj.20140123082920.4161: *3* scripting-at-rclick-nodes-->
 ### scripting-at-rclick-nodes
 The `@bool scripting-at-rclick-nodes = True` node makes the mod_scripting.py plugin generate minibuffer commands for all the @rclick nodes in the outline.  This means you can call the 'mark-task-done' and 'generate-week-report' scripts with Alt-X, and also with the context menu (see below).

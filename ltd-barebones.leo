@@ -35,7 +35,7 @@
 <v t="peckj.20131118114637.5393"><vh>Leisure</vh></v>
 </v>
 </v>
-<v t="peckj.20131118114637.5266" a="E"><vh>@settings</vh>
+<v t="peckj.20131118114637.5266"><vh>@settings</vh>
 <v t="peckj.20131118114637.5859"><vh>@bool scripting-at-rclick-nodes = True</vh></v>
 <v t="peckj.20140123082920.3668"
 expanded="peckj.20140104191955.3667,peckj.20140104165323.3722,peckj.20140104165323.3752,"><vh>@file ltd-scripts.txt</vh></v>
