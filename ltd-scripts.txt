@@ -106,7 +106,7 @@ def move_node_to_reports(node, tasktype, date):
   ''' moves the original node to the correct "Report" subtree '''
   ## move original node to the correct report directory
   ds = time.strftime("%m/%d/%Y", date.timetuple())
-  cal = datetime.date.today().isocalendar()
+  cal = date.isocalendar()
   weeknum = "%s Week %s" % (cal[0], cal[1]) # ex. '2013 Week 41'
   tasktype = tasktype[1:].title() # convert '@work' to 'Work', for example
   
